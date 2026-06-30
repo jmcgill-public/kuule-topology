@@ -1,0 +1,64 @@
+# Generated Dockerfile: {{ name }}
+# Base: {{ base_image }}
+# JVM: {{ jvm.type }}
+# Kafka: {{ kafka.version }}
+
+FROM {{ base_image }} AS builder
+
+# Install build deps (if needed for downloading Kafka)
+{% if package_manager == 'pacman' %}
+RUN pacman -Syu --noconfirm --needed wget tar && pacman -Scc --noconfirm
+{% elif package_manager == 'apt-get' %}
+RUN apt-get update && apt-get install -y --no-install-recommends wget ca-certificates && rm -rf /var/lib/apt/lists/*
+{% elif package_manager == 'apk' %}
+RUN apk add --no-cache wget ca-certificates
+{% elif package_manager == 'microdnf' %}
+RUN microdnf install -y wget tar gzip && microdnf clean all
+{% endif %}
+
+# Download precompiled Kafka
+WORKDIR /tmp
+RUN wget -q https://archive.apache.org/dist/kafka/{{ kafka.version }}/kafka_{{ kafka.scala_version }}-{{ kafka.version }}.tgz && \
+    tar -xzf kafka_{{ kafka.scala_version }}-{{ kafka.version }}.tgz && \
+    mv kafka_{{ kafka.scala_version }}-{{ kafka.version }} /kafka
+
+# Runtime stage
+FROM {{ base_image }}
+
+{% if jvm.package %}
+# Install JVM runtime
+{% if package_manager == 'pacman' %}
+RUN pacman -Syu --noconfirm --needed {{ jvm.package }} bash && pacman -Scc --noconfirm
+{% elif package_manager == 'apt-get' %}
+RUN apt-get update && apt-get install -y --no-install-recommends {{ jvm.package }} && rm -rf /var/lib/apt/lists/*
+{% elif package_manager == 'apk' %}
+RUN apk add --no-cache {{ jvm.package }} bash
+{% elif package_manager == 'microdnf' %}
+RUN microdnf install -y {{ jvm.package }} && microdnf clean all
+{% endif %}
+{% endif %}
+
+# Copy Kafka from builder
+COPY --from=builder /kafka /opt/kafka
+
+# Create kafka user
+RUN useradd -r -m -u 1001 kafka || adduser -D -u 1001 kafka && \
+    mkdir -p /var/lib/kafka/data && \
+    chown -R kafka:kafka /opt/kafka /var/lib/kafka
+
+# Set environment
+ENV PATH=/opt/kafka/bin:$PATH
+ENV KAFKA_HEAP_OPTS="-Xms{{ jvm.heap_min }} -Xmx{{ jvm.heap_max }}"
+
+WORKDIR /opt/kafka
+USER kafka
+
+CMD ["/bin/bash"]
+
+# Expose standard Kafka ports
+EXPOSE 9092 9093
+
+# Metadata
+LABEL org.opencontainers.image.title="Kafka {{ kafka.version }} ({{ name }})" \
+      org.opencontainers.image.description="Minimal Kafka broker - {{ jvm.type }} on {{ base_image }}" \
+      org.opencontainers.image.source="https://github.com/jmcgill-public/kuule-topology"

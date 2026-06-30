@@ -1,0 +1,50 @@
+# Dockerfile matrix: OS × JVM combinations for Kafka 3.7.0
+# Generate with: python3 generate.py
+
+kafka:
+  version: "3.7.0"
+  scala_version: "2.13"
+
+combinations:
+  - name: arch-temurin21
+    base_image: docker.io/archlinux:base
+    jvm:
+      type: temurin
+      package: jre21-openjdk-headless
+      heap_min: 128m
+      heap_max: 128m
+    package_manager: pacman
+
+  - name: openj9-jammy
+    base_image: docker.io/library/ibm-semeru-runtimes:open-21-jre-jammy
+    jvm:
+      type: openj9
+      package: null  # Pre-installed in base image
+      heap_min: 128m
+      heap_max: 128m
+    package_manager: apt-get
+
+  - name: debian-temurin21
+    base_image: docker.io/library/eclipse-temurin:21-jre-jammy
+    jvm:
+      type: temurin
+      package: null  # Pre-installed
+      heap_min: 128m
+      heap_max: 128m
+    package_manager: apt-get
+
+  - name: alpine-temurin21
+    base_image: docker.io/library/eclipse-temurin:21-jre-alpine
+    jvm:
+      type: temurin
+      package: null  # Pre-installed
+      heap_min: 128m
+      heap_max: 128m
+    package_manager: apk
+
+# Benchmark targets (for future)
+benchmarks:
+  - image_size
+  - startup_time
+  - memory_footprint
+  - first_message_latency
