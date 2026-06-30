@@ -1,0 +1,172 @@
+#!/usr/bin/env python3
+"""
+Kuule Runtime — Container orchestration from hex topology events
+Consumes hex.topology.events, manages podman containers
+"""
+
+import json
+import subprocess
+import sys
+from kafka import KafkaConsumer
+
+KAFKA_BOOTSTRAP = "localhost:9092"
+TOPIC = "hex.topology.events"
+NETWORK = "kuule-net"
+
+def ensure_network():
+    """Create podman network if not exists"""
+    result = subprocess.run(
+        ["podman", "network", "exists", NETWORK],
+        capture_output=True
+    )
+    if result.returncode != 0:
+        subprocess.run(["podman", "network", "create", NETWORK], check=True)
+        print(f"✓ Created network: {NETWORK}")
+
+def hex_to_container_name(hex_coord, node_type):
+    """Convert hex coordinate to container name"""
+    q, r, s = hex_coord["q"], hex_coord["r"], hex_coord["s"]
+    # Handle negative coordinates in name (s=-1 → n1)
+    s_str = f"n{abs(s)}" if s < 0 else str(s)
+    r_str = f"n{abs(r)}" if r < 0 else str(r)
+
+    base = f"kuule-hex-{q}-{r_str}-{s_str}"
+
+    # Add role suffix for non-broker types
+    if node_type != "kafka-broker":
+        role = node_type.replace("-", "")
+        return f"{base}-{role}"
+
+    return base
+
+def start_controller(event_data):
+    """Start KRaft controller container"""
+    hex_coord = event_data["hex"]
+    node = event_data["node"]
+    container_name = hex_to_container_name(hex_coord, node["type"])
+
+    # Check if already running
+    result = subprocess.run(
+        ["podman", "ps", "-q", "-f", f"name={container_name}"],
+        capture_output=True, text=True
+    )
+    if result.stdout.strip():
+        print(f"⚠️  Container {container_name} already running")
+        return
+
+    print(f"🚀 Starting {container_name} (KRaft controller at Hiljaisuus)...")
+
+    # For now, just log what we'd do
+    # TODO: Generate actual server.properties, mount as volume
+    cmd = [
+        "podman", "run", "-d",
+        "--name", container_name,
+        "--network", NETWORK,
+        "-p", "9093:9093",  # Controller port
+        "quay.io/jakko/kafka-kraft:latest",
+        "/bin/bash", "-c", "echo 'Controller would start here'; sleep infinity"
+    ]
+
+    subprocess.run(cmd, check=True)
+    print(f"✓ Started {container_name}")
+
+def start_observability(event_data):
+    """Start observability node container"""
+    hex_coord = event_data["hex"]
+    node = event_data["node"]
+    container_name = hex_to_container_name(hex_coord, node["type"])
+
+    print(f"🔍 Starting {container_name} (observability)...")
+
+    # Lightweight container that just logs for now
+    cmd = [
+        "podman", "run", "-d",
+        "--name", container_name,
+        "--network", NETWORK,
+        "quay.io/jakko/kafka-kraft:latest",
+        "/bin/bash", "-c",
+        f"echo 'Observability node monitoring: {node.get(\"monitors\", [])}'; " +
+        f"echo 'Event source: {node[\"config\"].get(\"event_source\", \"unknown\")}'; " +
+        "sleep infinity"
+    ]
+
+    subprocess.run(cmd, check=True)
+    print(f"✓ Started {container_name}")
+
+def remove_node(event_data):
+    """Stop and remove container"""
+    hex_coord = event_data["hex"]
+    # We don't know node_type from remove event, so search by hex prefix
+    q, r, s = hex_coord["q"], hex_coord["r"], hex_coord["s"]
+    s_str = f"n{abs(s)}" if s < 0 else str(s)
+    r_str = f"n{abs(r)}" if r < 0 else str(r)
+    prefix = f"kuule-hex-{q}-{r_str}-{s_str}"
+
+    # Find containers matching prefix
+    result = subprocess.run(
+        ["podman", "ps", "-a", "--format", "{{.Names}}"],
+        capture_output=True, text=True
+    )
+
+    for name in result.stdout.strip().split("\n"):
+        if name.startswith(prefix):
+            print(f"🛑 Stopping {name}...")
+            subprocess.run(["podman", "stop", name], check=True)
+            subprocess.run(["podman", "rm", name], check=True)
+            print(f"✓ Removed {name}")
+
+def handle_event(event):
+    """Process hex topology event"""
+    event_type = event["type"]
+    data = event["data"]
+
+    print(f"\n📨 Event: {event_type}")
+    print(f"   Subject: {event['subject']}")
+
+    if event_type == "hex.node.assigned":
+        node_type = data["node"]["type"]
+
+        if node_type == "kraft-controller":
+            start_controller(data)
+        elif node_type == "observability":
+            start_observability(data)
+        else:
+            print(f"⚠️  Unknown node type: {node_type}")
+
+    elif event_type == "hex.node.removed":
+        remove_node(data)
+
+    elif event_type == "hex.relationship.created":
+        print(f"   Relationship: {data['relationship_type']}")
+        print(f"   From: {data['from_hex']} → To: {data['to_hex']}")
+        # Relationships are metadata, no container action needed
+
+    else:
+        print(f"⚠️  Unknown event type: {event_type}")
+
+def main():
+    ensure_network()
+
+    print("🎧 Kuule Runtime listening on hex.topology.events...")
+    print(f"   Kafka: {KAFKA_BOOTSTRAP}")
+    print(f"   Network: {NETWORK}")
+    print()
+
+    consumer = KafkaConsumer(
+        TOPIC,
+        bootstrap_servers=KAFKA_BOOTSTRAP,
+        value_deserializer=lambda m: json.loads(m.decode('utf-8')),
+        group_id='kuule-runtime',
+        auto_offset_reset='earliest'  # Process all events from beginning
+    )
+
+    try:
+        for message in consumer:
+            event = message.value
+            handle_event(event)
+    except KeyboardInterrupt:
+        print("\n\n👋 Shutting down...")
+        consumer.close()
+
+if __name__ == "__main__":
+    main()

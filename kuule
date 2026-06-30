@@ -1,0 +1,119 @@
+#!/usr/bin/env python3
+"""
+Kuule — Hex topology event producer
+Boots controller at Hiljaisuus, assigns observability nodes
+"""
+
+import sys
+import json
+import uuid
+from datetime import datetime, timezone
+from kafka import KafkaProducer
+
+KAFKA_BOOTSTRAP = "localhost:9092"
+TOPIC = "hex.topology.events"
+
+producer = KafkaProducer(
+    bootstrap_servers=KAFKA_BOOTSTRAP,
+    value_serializer=lambda v: json.dumps(v).encode('utf-8')
+)
+
+def cloudevent(event_type, subject, data, source="kuule-cli"):
+    """Create CloudEvent envelope"""
+    return {
+        "specversion": "1.0",
+        "type": event_type,
+        "source": source,
+        "subject": subject,
+        "id": str(uuid.uuid4()),
+        "time": datetime.now(timezone.utc).isoformat(),
+        "datacontenttype": "application/json",
+        "data": data
+    }
+
+def boot_controller():
+    """Bootstrap KRaft controller at Hiljaisuus (0,0,0)"""
+    event = cloudevent(
+        "hex.node.assigned",
+        "hex/0,0,0",
+        {
+            "hex": {"q": 0, "r": 0, "s": 0},
+            "node": {
+                "id": "controller-1",
+                "type": "kraft-controller",
+                "config": {
+                    "process.roles": "controller",
+                    "node.id": 0,
+                    "controller.quorum.voters": "0@localhost:9093"
+                }
+            }
+        }
+    )
+
+    producer.send(TOPIC, value=event)
+    producer.flush()
+    print(f"✓ Bootstrapped controller-1 at Hiljaisuus (0,0,0)")
+    print(f"  Event ID: {event['id']}")
+
+def assign_raft_monitor():
+    """Assign raft observability node at (1,0,-1)"""
+    # Node assignment
+    assign_event = cloudevent(
+        "hex.node.assigned",
+        "hex/1,0,-1",
+        {
+            "hex": {"q": 1, "r": 0, "s": -1},
+            "node": {
+                "id": "raft-monitor-otel",
+                "type": "observability",
+                "monitors": ["hex/0,0,0"],
+                "config": {
+                    "event_source": "raft.events",
+                    "otel_endpoint": "localhost:4317",
+                    "filters": ["raft.*"]
+                }
+            }
+        }
+    )
+
+    # Relationship
+    rel_event = cloudevent(
+        "hex.relationship.created",
+        "relationship/raft-monitor",
+        {
+            "from_hex": {"q": 1, "r": 0, "s": -1},
+            "to_hex": {"q": 0, "r": 0, "s": 0},
+            "relationship_type": "observes",
+            "metadata": {
+                "event_stream": "raft.events",
+                "otel_protocol": "grpc"
+            }
+        }
+    )
+
+    producer.send(TOPIC, value=assign_event)
+    producer.send(TOPIC, value=rel_event)
+    producer.flush()
+
+    print(f"✓ Assigned raft-monitor-otel at (1,0,-1)")
+    print(f"  Observes: controller-1 (raft.events)")
+    print(f"  Event IDs: {assign_event['id']}, {rel_event['id']}")
+
+def usage():
+    print("Usage:")
+    print("  kuule boot           - Bootstrap controller at Hiljaisuus")
+    print("  kuule raft-monitor   - Assign raft observability node")
+    sys.exit(1)
+
+if __name__ == "__main__":
+    if len(sys.argv) < 2:
+        usage()
+
+    cmd = sys.argv[1]
+
+    if cmd == "boot":
+        boot_controller()
+    elif cmd == "raft-monitor":
+        assign_raft_monitor()
+    else:
+        usage()

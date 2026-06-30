@@ -1,0 +1,183 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Kuule Hex Topology Events",
+  "description": "CloudEvents schema for hex-based topology configuration (M-19 substrate)",
+
+  "definitions": {
+    "hex_coordinate": {
+      "type": "object",
+      "properties": {
+        "q": {"type": "integer"},
+        "r": {"type": "integer"},
+        "s": {"type": "integer"}
+      },
+      "required": ["q", "r", "s"],
+      "additionalProperties": false
+    },
+
+    "node_types": {
+      "enum": [
+        "kraft-controller",
+        "kafka-broker",
+        "observability",
+        "producer-agent",
+        "consumer-agent",
+        "bridge",
+        "pgvector-agent-api"
+      ]
+    }
+  },
+
+  "events": {
+    "hex.node.assigned": {
+      "description": "Assign a semantic node to hex coordinate",
+      "cloudevents_type": "hex.node.assigned",
+      "data_schema": {
+        "type": "object",
+        "properties": {
+          "hex": {"$ref": "#/definitions/hex_coordinate"},
+          "node": {
+            "type": "object",
+            "properties": {
+              "id": {"type": "string"},
+              "type": {"$ref": "#/definitions/node_types"},
+              "monitors": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Hex coordinates this node observes (for observability type)"
+              },
+              "config": {
+                "type": "object",
+                "description": "Node-specific configuration (server.properties, consumer config, etc.)"
+              }
+            },
+            "required": ["id", "type"]
+          }
+        },
+        "required": ["hex", "node"]
+      },
+      "examples": [
+        {
+          "specversion": "1.0",
+          "type": "hex.node.assigned",
+          "source": "kuule-bootstrap",
+          "subject": "hex/0,0,0",
+          "id": "bootstrap-001",
+          "time": "2026-06-30T14:00:00Z",
+          "datacontenttype": "application/json",
+          "data": {
+            "hex": {"q": 0, "r": 0, "s": 0},
+            "node": {
+              "id": "controller-1",
+              "type": "kraft-controller",
+              "config": {
+                "process.roles": "controller",
+                "node.id": 0,
+                "controller.quorum.voters": "0@localhost:9093"
+              }
+            }
+          }
+        },
+        {
+          "specversion": "1.0",
+          "type": "hex.node.assigned",
+          "source": "kuule-operator",
+          "subject": "hex/1,0,-1",
+          "id": "monitor-001",
+          "time": "2026-06-30T14:01:00Z",
+          "datacontenttype": "application/json",
+          "data": {
+            "hex": {"q": 1, "r": 0, "s": -1},
+            "node": {
+              "id": "raft-monitor-otel",
+              "type": "observability",
+              "monitors": ["hex/0,0,0"],
+              "config": {
+                "event_source": "raft.events",
+                "otel_endpoint": "localhost:4317",
+                "filters": ["raft.*"]
+              }
+            }
+          }
+        }
+      ]
+    },
+
+    "hex.relationship.created": {
+      "description": "Create semantic relationship between hex nodes",
+      "cloudevents_type": "hex.relationship.created",
+      "data_schema": {
+        "type": "object",
+        "properties": {
+          "from_hex": {"$ref": "#/definitions/hex_coordinate"},
+          "to_hex": {"$ref": "#/definitions/hex_coordinate"},
+          "relationship_type": {
+            "enum": [
+              "observes",
+              "replicates-from",
+              "consumes-from",
+              "produces-to",
+              "bridges-to"
+            ]
+          },
+          "metadata": {
+            "type": "object",
+            "description": "Relationship-specific metadata"
+          }
+        },
+        "required": ["from_hex", "to_hex", "relationship_type"]
+      },
+      "examples": [
+        {
+          "specversion": "1.0",
+          "type": "hex.relationship.created",
+          "source": "kuule-operator",
+          "subject": "relationship/raft-monitor",
+          "id": "rel-001",
+          "time": "2026-06-30T14:01:30Z",
+          "datacontenttype": "application/json",
+          "data": {
+            "from_hex": {"q": 1, "r": 0, "s": -1},
+            "to_hex": {"q": 0, "r": 0, "s": 0},
+            "relationship_type": "observes",
+            "metadata": {
+              "event_stream": "raft.events",
+              "otel_protocol": "grpc"
+            }
+          }
+        }
+      ]
+    },
+
+    "hex.node.removed": {
+      "description": "Remove node from hex coordinate",
+      "cloudevents_type": "hex.node.removed",
+      "data_schema": {
+        "type": "object",
+        "properties": {
+          "hex": {"$ref": "#/definitions/hex_coordinate"},
+          "node_id": {"type": "string"},
+          "reason": {"type": "string"}
+        },
+        "required": ["hex", "node_id"]
+      }
+    },
+
+    "hex.disruption.injected": {
+      "description": "Simulate node failure or network partition",
+      "cloudevents_type": "hex.disruption.injected",
+      "data_schema": {
+        "type": "object",
+        "properties": {
+          "hex": {"$ref": "#/definitions/hex_coordinate"},
+          "disruption_type": {
+            "enum": ["node-killed", "network-partition", "slow-network", "disk-full"]
+          },
+          "duration_ms": {"type": "integer"},
+          "metadata": {"type": "object"}
+        },
+        "required": ["hex", "disruption_type"]
+      }
+    }
+  }
+}

@@ -1,0 +1,42 @@
+# Minimal Kafka 3.7.0 on Arch Linux
+# Target: <200MB final image
+
+FROM docker.io/archlinux:base AS builder
+
+# Install only build deps
+RUN pacman -Syu --noconfirm --needed \
+    jdk21-openjdk \
+    wget \
+    && pacman -Scc --noconfirm
+
+# Download precompiled Kafka (no build, just extract)
+ARG KAFKA_VERSION=3.7.0
+ARG SCALA_VERSION=2.13
+WORKDIR /tmp
+RUN wget -q https://archive.apache.org/dist/kafka/${KAFKA_VERSION}/kafka_${SCALA_VERSION}-${KAFKA_VERSION}.tgz && \
+    tar -xzf kafka_${SCALA_VERSION}-${KAFKA_VERSION}.tgz && \
+    mv kafka_${SCALA_VERSION}-${KAFKA_VERSION} /kafka && \
+    rm kafka_${SCALA_VERSION}-${KAFKA_VERSION}.tgz
+
+# Runtime stage (minimal)
+FROM docker.io/archlinux:base
+
+# Only JRE runtime (not full JDK)
+RUN pacman -Syu --noconfirm --needed \
+    jre21-openjdk-headless \
+    bash \
+    && pacman -Scc --noconfirm
+
+# Copy Kafka binaries from builder
+COPY --from=builder /kafka /opt/kafka
+
+# Create kafka user
+RUN useradd -r -m -u 1001 kafka && \
+    mkdir -p /var/lib/kafka/data && \
+    chown -R kafka:kafka /var/lib/kafka /opt/kafka
+
+ENV PATH=/opt/kafka/bin:$PATH
+WORKDIR /opt/kafka
+USER kafka
+
+CMD ["/bin/bash"]

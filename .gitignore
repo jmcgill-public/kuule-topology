@@ -1,0 +1,39 @@
+# Build artifacts
+*.tgz
+*.tar.gz
+*.jar
+
+# Container runtime
+.docker/
+.podman/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+venv/
+
+# Postgres
+*.sql.backup
+
+# Logs
+*.log
+logs/
+
+# Temp files
+.DS_Store
+*.swp
+*.swo
+*~
+
+# Cluster state (ephemeral)
+/tmp/
+*.uuid
+cluster-uuid.txt
+
+# IDE
+.vscode/
+.idea/
+*.iml
