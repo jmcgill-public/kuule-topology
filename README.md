@@ -94,7 +94,7 @@ AI learns patterns, generates configs
 ## Design Principles
 
 ### Ephemeral Runtime, Durable Config
-- Containers are cattle (kill/restart freely)
+- Containers are disposable (kill/restart freely)
 - `hex.topology.events` is truth (replay = rebuild)
 - State in Kafka, not in containers
 
